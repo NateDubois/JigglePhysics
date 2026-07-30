@@ -29,7 +29,7 @@ public static class JiggleTreeStructExtensions {
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void WriteOutputPose(this JiggleTreeJobData self, NativeArray<PoseData> outputPoses, int index, JiggleTransform pose, float3 rootOffset, float3 rootPosition, float rootSnapStrength) {
+    public static void WriteOutputPose(this JiggleTreeJobData self, NativeArray<PoseData> outputPoses, int index, JiggleTransform pose, float3 rootOffset, float3 rootPosition, quaternion rootRotation, float rootSnapStrength) {
         var old = outputPoses[index + (int)self.transformIndexOffset];
         if (old.pose.isVirtual) {
             return;
@@ -39,10 +39,11 @@ public static class JiggleTreeStructExtensions {
         pose.position = SanitizeOutput(pose.position);
         pose.scale = SanitizeOutput(pose.scale);
         pose.rotation = SanitizeOutput(pose.rotation);
-        
+
         old.pose = pose;
         old.rootOffset = SanitizeOutput(rootOffset);
         old.rootPosition = SanitizeOutput(rootPosition);
+        old.rootRotation = SanitizeOutput(rootRotation);
         old.rootSnapStrength = rootSnapStrength;
 
         outputPoses[index + (int)self.transformIndexOffset] = old;

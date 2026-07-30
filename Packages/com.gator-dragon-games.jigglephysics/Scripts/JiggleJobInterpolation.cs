@@ -9,6 +9,7 @@ namespace GatorDragonGames.JigglePhysics {
 [BurstCompile]
 public struct JiggleJobInterpolation : IJobFor {
     [ReadOnly] public NativeArray<float3> realRootPositions;
+    [ReadOnly] public NativeArray<quaternion> realRootRotations;
 
     [ReadOnly] public NativeArray<PoseData> previousPoses;
     [ReadOnly] public NativeArray<PoseData> currentPoses;
@@ -29,6 +30,7 @@ public struct JiggleJobInterpolation : IJobFor {
         currentPoses = bus.interpolationCurrentPoseData;
         outputInterpolatedPoses = bus.interpolationOutputPoses;
         realRootPositions = bus.rootOutputPositions;
+        realRootRotations = bus.rootOutputRotations;
     }
 
     public void UpdateArrays(JiggleMemoryBus bus) {
@@ -36,6 +38,7 @@ public struct JiggleJobInterpolation : IJobFor {
         currentPoses = bus.interpolationCurrentPoseData;
         outputInterpolatedPoses = bus.interpolationOutputPoses;
         realRootPositions = bus.rootOutputPositions;
+        realRootRotations = bus.rootOutputRotations;
     }
     
     public void SetFixedDeltaTime(float fixedDeltaTime) {
@@ -54,8 +57,20 @@ public struct JiggleJobInterpolation : IJobFor {
         var t = math.saturate((currentTime - timeCorrection - previousTimeStamp) / diff);
         var interPose = PoseData.Lerp(prevPose, newPose, (float)t);
 
-        var snapToReal = realRootPositions[index] - interPose.rootPosition;
-        interPose.pose.position += (snapToReal + interPose.rootOffset) * interPose.rootSnapStrength;
+        // rootPosition == rootSimulationPosition and rootOffset == rootSimulationPosition - rootPose,
+        // so subtracting them recovers the animated (lagged) root position at simulation time.
+        var laggedRootPosition = interPose.rootPosition - interPose.rootOffset;
+        var laggedRootRotation = math.normalizesafe(interPose.rootRotation, quaternion.identity);
+
+        var snap = interPose.rootSnapStrength;
+        var rootDelta = math.mul(realRootRotations[index], math.inverse(laggedRootRotation));
+        var blended = snap >= 1f ? rootDelta : math.slerp(quaternion.identity, rootDelta, snap);
+
+        var offsetFromRoot = interPose.pose.position - laggedRootPosition;
+        var target = realRootPositions[index] + math.rotate(blended, offsetFromRoot);
+
+        interPose.pose.position = math.lerp(interPose.pose.position, target, snap);
+        interPose.pose.rotation = math.mul(blended, interPose.pose.rotation);
         outputInterpolatedPoses[index] = interPose.pose;
     }
 }
