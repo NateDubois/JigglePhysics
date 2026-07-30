@@ -12,6 +12,7 @@ public struct PoseData {
     public JiggleTransform pose;
     public float3 rootPosition;
     public float3 rootOffset;
+    public quaternion rootRotation;
     public float rootSnapStrength;
 
     public static PoseData Lerp(PoseData a, PoseData b, float t) {
@@ -19,6 +20,7 @@ public struct PoseData {
             pose = JiggleTransform.Lerp(a.pose, b.pose, t),
             rootPosition = math.lerp(a.rootPosition, b.rootPosition, t),
             rootOffset = math.lerp(a.rootOffset, b.rootOffset, t),
+            rootRotation = math.slerp(a.rootRotation, b.rootRotation, t),
             rootSnapStrength = math.lerp(a.rootSnapStrength, b.rootSnapStrength, t)
         };
     }
@@ -41,6 +43,7 @@ public class JiggleMemoryBus {
     private JiggleTransform[] restPoseTransformsArray;
     private JiggleTransform[] previousLocalRestPoseTransformsArray;
     private float3[] rootOutputPositionsArray;
+    private quaternion[] rootOutputRotationsArray;
     private JiggleTransform[] interpolationOutputPosesArray;
     private PoseData[] simulationOutputPoseDataArray;
     private PoseData[] interpolationCurrentPoseDataArray;
@@ -62,6 +65,7 @@ public class JiggleMemoryBus {
     public NativeArray<JiggleTransform> restPoseTransforms;
     public NativeArray<JiggleTransform> previousLocalRestPoseTransforms;
     public NativeArray<float3> rootOutputPositions;
+    public NativeArray<quaternion> rootOutputRotations;
     public NativeArray<JiggleTransform> interpolationOutputPoses;
     public NativeArray<PoseData> simulationOutputPoseData;
     public NativeArray<PoseData> interpolationCurrentPoseData;
@@ -238,6 +242,7 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
         var newRestPoseTransformsArray = new JiggleTransform[newTransformCapacity];
         var newPreviousLocalRestPoseTransformsArray = new JiggleTransform[newTransformCapacity];
         var newRootOutputPositionsArray = new float3[newTransformCapacity];
+        var newRootOutputRotationsArray = new quaternion[newTransformCapacity];
         var newInterpolationOutputPosesArray = new JiggleTransform[newTransformCapacity];
         var newSimulationOutputPoseDataArray = new PoseData[newTransformCapacity];
         var newInterpolationCurrentPoseDataArray = new PoseData[newTransformCapacity];
@@ -254,6 +259,8 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
             System.Array.Copy(previousLocalRestPoseTransformsArray, newPreviousLocalRestPoseTransformsArray,
                 System.Math.Min(transformCount, newTransformCapacity));
             System.Array.Copy(rootOutputPositionsArray, newRootOutputPositionsArray,
+                System.Math.Min(transformCount, newTransformCapacity));
+            System.Array.Copy(rootOutputRotationsArray, newRootOutputRotationsArray,
                 System.Math.Min(transformCount, newTransformCapacity));
             System.Array.Copy(interpolationOutputPosesArray, newInterpolationOutputPosesArray,
                 System.Math.Min(transformCount, newTransformCapacity));
@@ -277,6 +284,7 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
         restPoseTransformsArray = newRestPoseTransformsArray;
         previousLocalRestPoseTransformsArray = newPreviousLocalRestPoseTransformsArray;
         rootOutputPositionsArray = newRootOutputPositionsArray;
+        rootOutputRotationsArray = newRootOutputRotationsArray;
         interpolationOutputPosesArray = newInterpolationOutputPosesArray;
         simulationOutputPoseDataArray = newSimulationOutputPoseDataArray;
         interpolationCurrentPoseDataArray = newInterpolationCurrentPoseDataArray;
@@ -290,6 +298,7 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
             restPoseTransforms.Dispose();
             previousLocalRestPoseTransforms.Dispose();
             rootOutputPositions.Dispose();
+            rootOutputRotations.Dispose();
             interpolationOutputPoses.Dispose();
             simulationOutputPoseData.Dispose();
             interpolationCurrentPoseData.Dispose();
@@ -302,6 +311,7 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
         restPoseTransforms = new NativeArray<JiggleTransform>(restPoseTransformsArray, Allocator.Persistent);
         previousLocalRestPoseTransforms = new NativeArray<JiggleTransform>(previousLocalRestPoseTransformsArray, Allocator.Persistent);
         rootOutputPositions = new NativeArray<float3>(rootOutputPositionsArray, Allocator.Persistent);
+        rootOutputRotations = new NativeArray<quaternion>(rootOutputRotationsArray, Allocator.Persistent);
         interpolationOutputPoses = new NativeArray<JiggleTransform>(interpolationOutputPosesArray, Allocator.Persistent);
         simulationOutputPoseData = new NativeArray<PoseData>(simulationOutputPoseDataArray, Allocator.Persistent);
         interpolationCurrentPoseData = new NativeArray<PoseData>(interpolationCurrentPoseDataArray, Allocator.Persistent);
@@ -385,6 +395,7 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
         ReadIn(restPoseTransforms, restPoseTransformsArray, transformCount);
         ReadIn(previousLocalRestPoseTransforms, previousLocalRestPoseTransformsArray, transformCount);
         ReadIn(rootOutputPositions, rootOutputPositionsArray, transformCount);
+        ReadIn(rootOutputRotations, rootOutputRotationsArray, transformCount);
         ReadIn(interpolationOutputPoses, interpolationOutputPosesArray, transformCount);
         ReadIn(simulationOutputPoseData, simulationOutputPoseDataArray, transformCount);
         ReadIn(interpolationCurrentPoseData, interpolationCurrentPoseDataArray, transformCount);
@@ -446,6 +457,7 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
         NativeArray<JiggleTransform>.Copy(restPoseTransformsArray, restPoseTransforms, transformCount);
         NativeArray<JiggleTransform>.Copy(previousLocalRestPoseTransformsArray, previousLocalRestPoseTransforms, transformCount);
         NativeArray<float3>.Copy(rootOutputPositionsArray, rootOutputPositions, transformCount);
+        NativeArray<quaternion>.Copy(rootOutputRotationsArray, rootOutputRotations, transformCount);
         NativeArray<JiggleTransform>.Copy(interpolationOutputPosesArray, interpolationOutputPoses, transformCount);
         NativeArray<PoseData>.Copy(simulationOutputPoseDataArray, simulationOutputPoseData, transformCount);
         NativeArray<PoseData>.Copy(interpolationCurrentPoseDataArray, interpolationCurrentPoseData, transformCount);
@@ -580,7 +592,9 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
         if (!root) {
             root = GetDummyTransform(index);
         }
-        float3 rootPos = root.position;
+        root.GetPositionAndRotation(out var rootPosVec, out var rootRotQuat);
+        float3 rootPos = rootPosVec;
+        quaternion rootRot = rootRotQuat;
         for (int o = 0; o < jiggleTreeJobData.pointCount; o++) {
             unsafe {
                 var point = jiggleTreeJobData.points[o];
@@ -605,11 +619,13 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
                 restPoseTransformsArray[index + o] = localPose;
                 previousLocalRestPoseTransformsArray[index + o] = localPose;
                 rootOutputPositionsArray[index + o] = rootPos;
+                rootOutputRotationsArray[index + o] = rootRot;
                 interpolationOutputPosesArray[index + o] = pose;
                 var poseData = new PoseData() {
                     pose = pose,
                     rootOffset = new float3(0f),
                     rootPosition = rootPos,
+                    rootRotation = rootRot,
                 };
                 simulationOutputPoseDataArray[index + o] = poseData;
                 interpolationCurrentPoseDataArray[index + o] = poseData;
@@ -959,6 +975,7 @@ public void GetResults(out JiggleTransform[] poses, out JiggleTreeJobData[] tree
             restPoseTransforms.Dispose();
             previousLocalRestPoseTransforms.Dispose();
             rootOutputPositions.Dispose();
+            rootOutputRotations.Dispose();
             interpolationOutputPoses.Dispose();
             simulationOutputPoseData.Dispose();
             interpolationCurrentPoseData.Dispose();
