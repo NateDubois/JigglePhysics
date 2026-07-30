@@ -1,6 +1,7 @@
 using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
+using Unity.Mathematics;
 using UnityEngine;
 
 namespace GatorDragonGames.JigglePhysics {
@@ -39,24 +40,33 @@ public struct JiggleJobInputInterpolation : IJobFor {
     }
 
     public void Execute(int index) {
-        // The transforms backing currentInputs were read fresh this frame, so they are the most
-        // accurate constraint targets the solver can be given.
+        var prevPose = previousInputs[index];
+        var newPose = currentInputs[index];
+
+        var diff = timeStamp - previousTimeStamp;
+        if (diff <= 0) {
+            outputInterpolatedPoses[index] = newPose;
+            return;
+        }
+
+        // Resample the animated pose onto the simulation's own clock. currentTime is the
+        // simulation timestamp, which advances in uniform fixedDeltaTime steps, so every
+        // integration step receives an equal slice of animation -- sampling at the render rate
+        // instead aliases against it and makes the motion stutter.
         //
-        // This used to interpolate back toward previousInputs by
-        //     t = (currentTime - timeCorrection - previousTimeStamp) / (timeStamp - previousTimeStamp)
-        // which was neither clamped nor stable: because the sim ticks at 1/fixedDeltaTime while
-        // transforms are read at the render rate, t beat against the frame rate and swung over a
-        // range wider than a full frame (+0.33 to -0.80 at 60fps with fixedDeltaTime = 0.02,
-        // repeating every 6 frames), extrapolating backwards past previousInputs on most frames.
-        //
-        // Since JiggleTransform.Lerp is linear in position, that jitter cut chords across the
-        // rotation arc of a moving rig, deforming the chain rather than displacing it. A uniform
-        // translation of the input is cancelled downstream by the root snap in
-        // JiggleJobInterpolation (rootPose jitters with it), but lever-arm error from a rotating
-        // root is not, so it surfaced as rubber-banding on rigs whose root is driven by an Aim
-        // Constraint. Feeding the fresh pose through removes the jitter and 1-2 fixedDeltaTime of
-        // input latency along with it.
-        outputInterpolatedPoses[index] = currentInputs[index];
+        // This deliberately does NOT subtract timeCorrection. Doing so double-lagged the sample
+        // (currentTime already trails timeStamp by up to one fixedDeltaTime) and drove t negative,
+        // extrapolating backwards past previousInputs. Because the sim ticks at 1/fixedDeltaTime
+        // while transforms are read at the render rate, that error beat against the frame rate:
+        // at 60fps with fixedDeltaTime = 0.02 it cycled +0.33, -0.80, -0.60, -0.40, -0.20, 0.00
+        // every six frames. Since JiggleTransform.Lerp is linear in position, the swing cut chords
+        // across the rotation arc of a moving rig, deforming the chain rather than displacing it.
+        // A uniform translation of the input is cancelled downstream by the root snap in
+        // JiggleJobInterpolation (rootPose jitters along with every bone), but lever-arm error from
+        // a rotating root is not, so it surfaced as rubber-banding on rigs whose root is driven by
+        // an Aim Constraint.
+        var t = math.saturate((currentTime - previousTimeStamp) / diff);
+        outputInterpolatedPoses[index] = JiggleTransform.Lerp(prevPose, newPose, (float)t);
     }
 }
 
