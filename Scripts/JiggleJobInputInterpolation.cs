@@ -16,7 +16,7 @@ public struct JiggleJobInputInterpolation : IJobFor {
     public double currentTime;
 
     public NativeArray<JiggleTransform> outputInterpolatedPoses;
-    private float timeCorrection;
+    public float timeCorrection;
 
     public JiggleJobInputInterpolation(JiggleMemoryBus bus, double time, float fixedDeltaTime) {
         timeCorrection = fixedDeltaTime;
@@ -39,18 +39,24 @@ public struct JiggleJobInputInterpolation : IJobFor {
     }
 
     public void Execute(int index) {
-        var prevPose = previousInputs[index];
-        var newPose = currentInputs[index];
-
-        var diff = timeStamp - previousTimeStamp;
-        if (diff == 0) {
-            throw new UnityException($"Time difference is zero ({timeStamp}-{previousTimeStamp}), cannot interpolate.");
-        }
-
-        var t = (currentTime - timeCorrection - previousTimeStamp) / diff;
-        var inter= JiggleTransform.Lerp(prevPose, newPose, (float)t);
-
-        outputInterpolatedPoses[index] = inter;
+        // The transforms backing currentInputs were read fresh this frame, so they are the most
+        // accurate constraint targets the solver can be given.
+        //
+        // This used to interpolate back toward previousInputs by
+        //     t = (currentTime - timeCorrection - previousTimeStamp) / (timeStamp - previousTimeStamp)
+        // which was neither clamped nor stable: because the sim ticks at 1/fixedDeltaTime while
+        // transforms are read at the render rate, t beat against the frame rate and swung over a
+        // range wider than a full frame (+0.33 to -0.80 at 60fps with fixedDeltaTime = 0.02,
+        // repeating every 6 frames), extrapolating backwards past previousInputs on most frames.
+        //
+        // Since JiggleTransform.Lerp is linear in position, that jitter cut chords across the
+        // rotation arc of a moving rig, deforming the chain rather than displacing it. A uniform
+        // translation of the input is cancelled downstream by the root snap in
+        // JiggleJobInterpolation (rootPose jitters with it), but lever-arm error from a rotating
+        // root is not, so it surfaced as rubber-banding on rigs whose root is driven by an Aim
+        // Constraint. Feeding the fresh pose through removes the jitter and 1-2 fixedDeltaTime of
+        // input latency along with it.
+        outputInterpolatedPoses[index] = currentInputs[index];
     }
 }
 
